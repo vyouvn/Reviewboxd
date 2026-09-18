@@ -16,7 +16,6 @@ const reviewData = ref<ReviewData | null>(null)
 const isLoading = ref(false)
 const errorMessage = ref('')
 const storyCanvasRef = ref<HTMLElement | null>(null)
-const res = await fetch(`/api/scrape?url=${encodeURIComponent(normalizeUrl(reviewUrl.value))}`)
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim()
@@ -34,7 +33,7 @@ async function fetchReview() {
   errorMessage.value = ''
   try {
     const url = normalizeUrl(reviewUrl.value)
-    const res = await fetch(`http://localhost:3001/api/scrape?url=${encodeURIComponent(url)}`)
+    const res = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`)
     if (!res.ok) throw new Error('Scrape request failed')
     reviewData.value = await res.json()
   } catch {
