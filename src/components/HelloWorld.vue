@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import html2canvas from 'html2canvas-pro'
 
 interface ReviewData {
@@ -26,6 +26,13 @@ interface TmdbImage {
 interface TmdbImages {
   posters: TmdbImage[]
   backdrops: TmdbImage[]
+}
+
+const storyScale = ref(1)
+
+function updateStoryScale() {
+  const availableWidth = window.innerWidth - 40
+  storyScale.value = Math.min(1, availableWidth / 540)
 }
 
 // --- TMDB ---------------------------------------------------------------
@@ -83,11 +90,31 @@ const imageError = ref('')
 onMounted(async () => {
   await nextTick()
   flyon().HSStaticMethods?.autoInit(['overlay'])
+  updateStoryScale()
+  window.addEventListener('resize', updateStoryScale)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateStoryScale)
 })
 
 function normalizeUrl(input: string): string {
   const trimmed = input.trim()
-  return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`
+  if (!trimmed) {
+    throw new Error('URL is required')
+  }
+  const url = new URL(
+    trimmed.startsWith('http') ? trimmed : `https://${trimmed}`
+  )
+  const hostname = url.hostname.toLowerCase()
+  if (
+    hostname !== 'letterboxd.com' &&
+    hostname !== 'www.letterboxd.com' &&
+    hostname !== 'boxd.it'
+  ) {
+    throw new Error('Not a Letterboxd URL')
+  }
+  return url.href
 }
 
 function starString(rating: number | null): string {
@@ -112,13 +139,23 @@ function sanitizeFilename(name: string): string {
 async function exportAsImage() {
   if (!storyCanvasRef.value) return
 
+  const story = storyCanvasRef.value
+  const previousTransform = story.style.transform
+
   try {
-    const canvas = await html2canvas(storyCanvasRef.value, {
+    story.style.transform = 'scale(1)'
+
+    await nextTick()
+
+    const canvas = await html2canvas(story, {
       useCORS: true,
       scale: 2,
     })
 
-    const title = reviewData.value?.filmTitle ? sanitizeFilename(reviewData.value.filmTitle) : 'story'
+    const title = reviewData.value?.filmTitle
+      ? sanitizeFilename(reviewData.value.filmTitle)
+      : 'story'
+
     const link = document.createElement('a')
     link.download = `${title}_review.png`
     link.href = canvas.toDataURL('image/png')
@@ -127,6 +164,8 @@ async function exportAsImage() {
     document.body.removeChild(link)
   } catch (err) {
     console.error('Export failed:', err)
+  } finally {
+    story.style.transform = previousTransform
   }
 }
 
@@ -217,20 +256,22 @@ function selectImage(image: TmdbImage) {
   <section id="center">
     <section id="spacer"></section>
     <div class="mb-8">
-      <div class="mb-4 text-6xl font-extrabold font-serif">Reviewboxd</div>
+      <div class="mb-4 text-5xl md:text-6xl font-extrabold font-serif">
+        Reviewboxd
+      </div>
       <p>Create Instagram story template from your Letterboxd film review.</p>
     </div>
 
     <!-- Review URL input -->
-    <div class="text-xs">Paste your Letterboxd review URL</div>
-    <div class="join w-xl">
+    <div class="join w-full max-w-xl">
       <input
         v-model="reviewUrl"
-        class="input text-sm join-item rounded-l-md"
-        placeholder="e.g.letterboxd.com/username/film/film-title/"
+        class="input flex-1 min-w-0 w-auto text-sm join-item rounded-l-md"
+        placeholder="Paste your Letterboxd review URL"
       />
+
       <button
-        class="btn btn-gradient btn-primary bg-primary text-primary-content text-sm join-item rounded-r-md tracking-wider"
+        class="btn btn-gradient btn-primary bg-primary text-primary-content text-sm join-item rounded-r-md tracking-wider shrink-0"
         :disabled="isLoading"
         @click="fetchReview"
       >
@@ -240,63 +281,78 @@ function selectImage(image: TmdbImage) {
     <p v-if="errorMessage" class="text-error text-sm">{{ errorMessage }}</p>
 
     <!-- Story template (1080x1920) -->
-    <div class="story-canvas-wrapper rounded-md border border-[#99aabb]/30">
-      <div v-if="reviewData" ref="storyCanvasRef" class="story-canvas card text-left rounded-none relative overflow-hidden">
-        <div class="absolute top-0 left-0 w-full h-55">
-          <img
-            v-if="reviewData?.backdropUrl"
-            :src="reviewData.backdropUrl"
-            crossorigin="anonymous"
-            alt=""
-            class="w-full h-40 object-cover"
-          />
-          <div class="absolute -inset-x-1 top-0 bg-linear-to-b from-transparent to-[#14181c] h-41"></div>
-          <button
-            type="button"
-            data-html2canvas-ignore
-            aria-label="Change backdrop"
-            class="absolute inset-x-0 top-0 flex h-40 cursor-pointer items-center justify-center bg-black/55 opacity-0 transition-opacity duration-200 hover:opacity-100 focus-visible:opacity-100"
-            @click="openPicker('backdrop')"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="size-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4L4 16v4" />
-              <path d="M13.5 6.5l4 4" />
-            </svg>
-          </button>
-        </div>
-        <div class="card-body pointer-events-none pt-30 relative z-10">
-          <div class="grid grid-cols-3 gap-3 mb-2.5">
-            <figure class="group relative w-fit self-start pointer-events-auto">
-              <img :src="reviewData?.posterUrl ?? 'https://cdn.flyonui.com/fy-assets/components/card/image-9.png'" crossorigin="anonymous" alt="Watch" class="border border-[#99aabb]/30 rounded-md h-50"/>
-              <!-- Edit overlay: editor-only, skipped by html2canvas so it never lands in the exported image -->
-              <button
-                type="button"
-                data-html2canvas-ignore
-                aria-label="Change poster"
-                class="absolute inset-0 flex cursor-pointer items-center justify-center rounded-md bg-black/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-visible:opacity-100"
-                @click="openPicker('poster')"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="size-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4L4 16v4" />
-                  <path d="M13.5 6.5l4 4" />
-                </svg>
-              </button>
-            </figure>
-            <div class="m-2 w-full col-span-2">
-              <p class="card-title mb-2.5 font-thin text-xs">Review by <span class="font-bold">{{ reviewData?.username ?? 'Username' }}</span></p>
-              <div class="mt-2 mb-4 h-px w-full bg-base-content/20"></div>
-              <div class="flex items-center gap-2">
-                <div class="font-custom font-extrabold card-title mb-2.5 text-2xl text-primary-content">{{ reviewData?.filmTitle ?? 'Title' }} <span class="text-xl text-[#99aabb] font-thin font-sans">{{ reviewData?.releaseYear ?? 'Year' }}</span></div>
-                <!-- <div class="card-title mb-2.5 text-sm opacity-60 text-primary-content">{{ reviewData?.releaseYear ?? 'Year' }}</div> -->
-              </div>
-              <div class="card-title mb-2.5 font-thin text-[#99aabb] text-sm"><span v-if="reviewData?.runtimeMinutes">{{ formatRuntime(reviewData.runtimeMinutes) }}</span> • Directed by {{ reviewData?.director ?? 'Director' }}</div>
-              <div class="flex items-baseline text-primary">
-                <span class="text-3xl">{{ starString(reviewData?.rating ?? null) }}</span>
-                <span v-if="hasHalfStar(reviewData?.rating ?? null)" class="text-2xl">½</span>
+    <div
+      class="story-canvas-wrapper rounded-md"
+    >
+      <div
+        v-if="reviewData"
+        class="story-canvas-stage"
+        :style="{
+          width: `${540 * storyScale}px`,
+          height: `${960 * storyScale}px`
+        }"
+      >
+        <div
+          ref="storyCanvasRef"
+          class="story-canvas card text-left rounded-none relative overflow-hidden border border-[#99aabb]/30"
+          :style="{ transform: `scale(${storyScale})` }"
+        >
+          <div class="absolute top-0 left-0 w-full h-55">
+            <img
+              v-if="reviewData?.backdropUrl"
+              :src="reviewData.backdropUrl"
+              crossorigin="anonymous"
+              alt=""
+              class="w-full h-40 object-cover"
+            />
+            <div class="absolute -inset-x-1 top-0 bg-linear-to-b from-transparent to-[#14181c] h-41"></div>
+            <button
+              type="button"
+              data-html2canvas-ignore
+              aria-label="Change backdrop"
+              class="absolute inset-x-0 top-0 flex h-40 cursor-pointer items-center justify-center bg-black/55 opacity-0 transition-opacity duration-200 hover:opacity-100 focus-visible:opacity-100"
+              @click="openPicker('backdrop')"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="size-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4L4 16v4" />
+                <path d="M13.5 6.5l4 4" />
+              </svg>
+            </button>
+          </div>
+          <div class="card-body pointer-events-none pt-30 relative z-10">
+            <div class="grid grid-cols-3 gap-3 mb-2.5">
+              <figure class="group relative w-fit self-start pointer-events-auto">
+                <img :src="reviewData?.posterUrl ?? 'https://cdn.flyonui.com/fy-assets/components/card/image-9.png'" crossorigin="anonymous" alt="Watch" class="border border-[#99aabb]/30 rounded-md h-50"/>
+                <!-- Edit overlay: editor-only, skipped by html2canvas so it never lands in the exported image -->
+                <button
+                  type="button"
+                  data-html2canvas-ignore
+                  aria-label="Change poster"
+                  class="absolute inset-0 flex cursor-pointer items-center justify-center rounded-md bg-black/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100 focus-visible:opacity-100"
+                  @click="openPicker('poster')"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="size-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4L4 16v4" />
+                    <path d="M13.5 6.5l4 4" />
+                  </svg>
+                </button>
+              </figure>
+              <div class="m-2 w-full col-span-2">
+                <p class="card-title mb-2.5 font-thin text-xs">Review by <span class="font-bold">{{ reviewData?.username ?? 'Username' }}</span></p>
+                <div class="mt-2 mb-4 h-px w-full bg-base-content/20"></div>
+                <div class="flex items-center gap-2">
+                  <div class="font-custom font-extrabold card-title mb-2.5 text-2xl text-primary-content">{{ reviewData?.filmTitle ?? 'Title' }} <span class="text-xl text-[#99aabb] font-thin font-sans">{{ reviewData?.releaseYear ?? 'Year' }}</span></div>
+                  <!-- <div class="card-title mb-2.5 text-sm opacity-60 text-primary-content">{{ reviewData?.releaseYear ?? 'Year' }}</div> -->
+                </div>
+                <div class="card-title mb-2.5 font-thin text-[#99aabb] text-sm"><span v-if="reviewData?.runtimeMinutes">{{ formatRuntime(reviewData.runtimeMinutes) }}</span> • Directed by {{ reviewData?.director ?? 'Director' }}</div>
+                <div class="flex items-baseline text-primary">
+                  <span class="text-3xl">{{ starString(reviewData?.rating ?? null) }}</span>
+                  <span v-if="hasHalfStar(reviewData?.rating ?? null)" class="text-2xl">½</span>
+                </div>
               </div>
             </div>
+            <p class="noto-serif font-serif">{{ reviewData?.reviewText ?? 'No review available.' }}</p>
           </div>
-          <p class="noto-serif font-serif">{{ reviewData?.reviewText ?? 'No review available.' }}</p>
         </div>
       </div>
     </div>

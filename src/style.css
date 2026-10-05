@@ -29,7 +29,7 @@
 
 :root {
   --sans: 'NotoSerif', sans-serif;
-  --heading:'SharpBold', Roboto, serif;
+  --heading: 'SharpBold', Roboto, serif;
   --mono: ui-monospace, Consolas, monospace;
 
   font: 18px/145% var(--sans);
@@ -39,10 +39,6 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
 body, .card {
@@ -89,15 +85,23 @@ p, .border{
 }
 
 .story-canvas-wrapper {
+  width: 100%;
   display: flex;
   justify-content: center;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.story-canvas-stage {
+  position: relative;
+  flex-shrink: 0;
 }
 
 .story-canvas {
   width: 540px;
+  height: 960px;
   aspect-ratio: 9 / 16;
   flex-shrink: 0;
+  transform-origin: top left;
 }
 
 #app {
@@ -123,6 +127,11 @@ p, .border{
   @media (max-width: 1024px) {
     padding: 32px 20px 24px;
     gap: 18px;
+  }
+
+  @media (max-width: 480px) {
+    padding: 24px 12px 20px;
+    gap: 16px;
   }
 }
 

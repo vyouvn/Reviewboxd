@@ -18,9 +18,43 @@ async function fetchHtml(url: string): Promise<string> {
   return res.text()
 }
 
+async function resolveReviewUrl(inputUrl: string): Promise<string> {
+  const url = new URL(inputUrl)
+  // Normal Letterboxd review URL
+  if (
+    url.hostname === 'letterboxd.com' ||
+    url.hostname === 'www.letterboxd.com'
+  ) {
+    return url.href
+  }
+  // Letterboxd short URL
+  if (url.hostname === 'boxd.it') {
+    const response = await fetch(url.href, {
+      ...fetchOptions,
+      redirect: 'follow',
+    })
+    if (!response.ok) {
+      throw new Error(`Could not resolve boxd.it URL: HTTP ${response.status}`)
+    }
+    const finalUrl = new URL(response.url)
+    if (
+      finalUrl.hostname !== 'letterboxd.com' &&
+      finalUrl.hostname !== 'www.letterboxd.com'
+    ) {
+      throw new Error('boxd.it did not redirect to Letterboxd')
+    }
+    return finalUrl.href
+  }
+  throw new Error('Unsupported URL')
+}
+
 function getFilmPageUrl(reviewUrl: string): string | null {
-  const match = reviewUrl.match(/^https:\/\/letterboxd\.com\/[^/]+\/film\/([^/]+)\/?/)
-  return match ? `https://letterboxd.com/film/${match[1]}/` : null
+  const match = reviewUrl.match(
+    /^https:\/\/(?:www\.)?letterboxd\.com\/[^/]+\/film\/([^/]+)\/?/
+  )
+  return match
+    ? `https://letterboxd.com/film/${match[1]}/`
+    : null
 }
 
 function parseRating(raw: string | undefined): number | null {
@@ -69,14 +103,19 @@ async function tmdbGet<T>(path: string, params: Record<string, string> = {}): Pr
 }
 
 app.get('/api/scrape', async (req, res) => {
-  const reviewUrl = req.query.url as string
-  const filmUrl = reviewUrl ? getFilmPageUrl(reviewUrl) : null
-
-  if (!filmUrl) {
-    return res.status(400).json({ error: 'Invalid Letterboxd review URL' })
+  const inputUrl = req.query.url as string
+  if (!inputUrl) {
+    return res.status(400).json({ error: 'URL is required' })
   }
-
   try {
+    const reviewUrl = await resolveReviewUrl(inputUrl)
+    const filmUrl = getFilmPageUrl(reviewUrl)
+
+    if (!filmUrl) {
+      return res.status(400).json({
+        error: 'Invalid Letterboxd review URL',
+      })
+    }
     const [reviewHtml, filmHtml] = await Promise.all([
       fetchHtml(reviewUrl),
       fetchHtml(filmUrl),
