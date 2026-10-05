@@ -136,6 +136,24 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '').trim()
 }
 
+// html2canvas paints a copy of the page inside a hidden iframe. In production the CSS is a
+// separate <link> file, and the iframe can start painting before it has loaded (common on
+// phones), which exports an unstyled image. Copying the rules in as an inline <style> avoids that.
+function inlineStyles(clonedDoc: Document) {
+  const css = Array.from(document.styleSheets)
+    .map((sheet) => {
+      try {
+        return Array.from(sheet.cssRules).map((rule) => rule.cssText).join('\n')
+      } catch {
+        return '' // cross-origin stylesheet, cannot be read
+      }
+    })
+    .join('\n')
+  const style = clonedDoc.createElement('style')
+  style.textContent = css
+  clonedDoc.head.appendChild(style)
+}
+
 async function exportAsImage() {
   if (!storyCanvasRef.value) return
 
@@ -146,10 +164,14 @@ async function exportAsImage() {
     story.style.transform = 'scale(1)'
 
     await nextTick()
+    await document.fonts.ready
 
     const canvas = await html2canvas(story, {
       useCORS: true,
       scale: 2,
+      // Render the clone at desktop width so phone and PC exports match.
+      windowWidth: 1280,
+      onclone: (clonedDoc) => inlineStyles(clonedDoc),
     })
 
     const title = reviewData.value?.filmTitle
@@ -351,7 +373,7 @@ function selectImage(image: TmdbImage) {
                 </div>
               </div>
             </div>
-            <p class="noto-serif font-serif">{{ reviewData?.reviewText ?? 'No review available.' }}</p>
+            <p class="font-noto">{{ reviewData?.reviewText ?? 'No review available.' }}</p>
           </div>
         </div>
       </div>

@@ -8,21 +8,21 @@
 
 @font-face {
   font-family: 'SharpBold';
-  src: url('assets/fonts/SharpBold.otf') format('otf');
+  src: url('./assets/fonts/SharpBold.otf') format('opentype');
   font-weight: 400;
   font-style: normal;
 }
 
 @font-face {
   font-family: 'NotoSerif';
-  src: url('assets/fonts/NotoSerif.ttf') format('ttf');
+  src: url('./assets/fonts/NotoSerif.ttf') format('truetype');
   font-weight: 400;
   font-style: normal;
 }
 
 @theme {
   --font-custom: 'SharpBold', serif;
-  --noto-serif: 'NotoSerif', serif;
+  --font-noto: 'NotoSerif', serif;
 }
 
 @import "flyonui/src/vendor/raty.css";
@@ -142,5 +142,3 @@ p, .border{
     height: 48px;
   }
 }
-
-
