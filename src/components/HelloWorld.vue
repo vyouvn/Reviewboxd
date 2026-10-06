@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import html2canvas from 'html2canvas-pro'
 
 interface ReviewData {
@@ -80,6 +80,23 @@ const isLoading = ref(false)
 const errorMessage = ref('')
 const storyCanvasRef = ref<HTMLElement | null>(null)
 
+// --- Export / share state -------------------------------------------------
+const isExporting = ref(false)
+const canShareFiles = ref(false)
+const shareHint = ref('')
+// The last rendered image, kept so a second tap on Share can open the share sheet instantly.
+let preparedFile: File | null = null
+
+// Any edit (new review, new poster or backdrop) makes the cached image stale.
+watch(
+  reviewData,
+  () => {
+    preparedFile = null
+    shareHint.value = ''
+  },
+  { deep: true },
+)
+
 const activePicker = ref<PickerKind>('poster')
 const picker = computed(() => PICKERS[activePicker.value])
 const tmdbImages = ref<TmdbImages | null>(null)
@@ -92,6 +109,11 @@ onMounted(async () => {
   flyon().HSStaticMethods?.autoInit(['overlay'])
   updateStoryScale()
   window.addEventListener('resize', updateStoryScale)
+
+  // Only show the Share button where the browser can share image files (mostly phones).
+  canShareFiles.value =
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files: [new File(['x'], 'test.png', { type: 'image/png' })] })
 })
 
 onBeforeUnmount(() => {
@@ -154,10 +176,18 @@ function inlineStyles(clonedDoc: Document) {
   clonedDoc.head.appendChild(style)
 }
 
-async function exportAsImage() {
-  if (!storyCanvasRef.value) return
+function storyFilename(): string {
+  const title = reviewData.value?.filmTitle
+    ? sanitizeFilename(reviewData.value.filmTitle)
+    : 'story'
+  return `${title}_review.png`
+}
 
+// Renders the story at full size (1080x1920). Shared by Save and Share.
+async function renderStoryCanvas(): Promise<HTMLCanvasElement | null> {
   const story = storyCanvasRef.value
+  if (!story) return null
+
   const previousTransform = story.style.transform
 
   try {
@@ -166,20 +196,29 @@ async function exportAsImage() {
     await nextTick()
     await document.fonts.ready
 
-    const canvas = await html2canvas(story, {
+    return await html2canvas(story, {
       useCORS: true,
       scale: 2,
       // Render the clone at desktop width so phone and PC exports match.
       windowWidth: 1280,
       onclone: (clonedDoc) => inlineStyles(clonedDoc),
     })
+  } finally {
+    story.style.transform = previousTransform
+  }
+}
 
-    const title = reviewData.value?.filmTitle
-      ? sanitizeFilename(reviewData.value.filmTitle)
-      : 'story'
+async function exportAsImage() {
+  if (isExporting.value) return
+  isExporting.value = true
+  shareHint.value = ''
+
+  try {
+    const canvas = await renderStoryCanvas()
+    if (!canvas) return
 
     const link = document.createElement('a')
-    link.download = `${title}_review.png`
+    link.download = storyFilename()
     link.href = canvas.toDataURL('image/png')
     document.body.appendChild(link)
     link.click()
@@ -187,7 +226,48 @@ async function exportAsImage() {
   } catch (err) {
     console.error('Export failed:', err)
   } finally {
-    story.style.transform = previousTransform
+    isExporting.value = false
+  }
+}
+
+// Opens the system share sheet with the image attached; Instagram shows up there as a target.
+async function shareAsImage() {
+  if (isExporting.value) return
+  isExporting.value = true
+  shareHint.value = ''
+
+  try {
+    let file = preparedFile
+
+    if (!file) {
+      const canvas = await renderStoryCanvas()
+      if (!canvas) return
+
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (!blob) throw new Error('Could not create the image')
+
+      file = new File([blob], storyFilename(), { type: 'image/png' })
+      preparedFile = file
+    }
+
+    await navigator.share({ files: [file] })
+  } catch (err) {
+    const name = err instanceof DOMException ? err.name : ''
+
+    // The user closed the share sheet. Not an error.
+    if (name === 'AbortError') return
+
+    // Browsers (iOS Safari especially) only allow sharing shortly after a tap, and rendering
+    // can take longer than that. The image is cached now, so the next tap shares instantly.
+    if (name === 'NotAllowedError' && preparedFile) {
+      shareHint.value = 'Your image is ready. Tap Share again to send it.'
+      return
+    }
+
+    console.error('Share failed:', err)
+    shareHint.value = 'Sharing failed. Use Save template instead.'
+  } finally {
+    isExporting.value = false
   }
 }
 
@@ -278,10 +358,20 @@ function selectImage(image: TmdbImage) {
   <section id="center">
     <section id="spacer"></section>
     <div class="mb-8">
-      <div class="mb-4 text-5xl md:text-6xl font-extrabold font-serif">
+      <div class="mb-4 text-4xl md:text-5xl font-extrabold font-serif">
         Reviewboxd
       </div>
-      <p>Create Instagram story template from your Letterboxd film review.</p>
+      <p class="text-sm md:text-md">Create Instagram story template from your Letterboxd film review.</p>
+      <a href="https://letterboxd.com/stardzt/" target="_blank" class="btn btn-sm [--btn-color:#000000] text-white rounded-sm mt-4" >
+        <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 512 512">
+          <path d="M0 0h512v512H0z" fill="none" />
+          <path fill-rule="evenodd" d="M256 0C114.6 0 0 114.6 0 256s114.6 256 256 256s256-114.6 256-256S397.4 0 256 0m-60.9 293.9c-6.9-11-10.9-24-10.9-37.9s4-26.9 10.9-37.9C202 229 206 242 206 256c0 13.9-4 26.9-10.9 37.9m121.8 0c-6.9-11-10.9-24-10.9-37.9s4-26.9 10.9-37.9c6.9 11 10.9 24 10.9 37.9s-4 26.9-10.9 37.9" />
+          <path fill="#00e054" fill-rule="evenodd" d="M316.9 218.1c-12.7-20.3-35.2-33.7-60.9-33.7s-48.2 13.5-60.9 33.7C202 229 206 242 206 256c0 13.9-4 26.9-10.9 37.9c12.7 20.3 35.2 33.7 60.9 33.7s48.2-13.5 60.9-33.7c-6.9-11-10.9-24-10.9-37.9c0-14 4-27 10.9-37.9" />
+          <path fill="#40bcf4" fill-rule="evenodd" d="M377.8 184.3c-25.7 0-48.2 13.5-60.9 33.7c6.9 11 10.9 24 10.9 37.9s-4 26.9-10.9 37.9c12.7 20.3 35.2 33.7 60.9 33.7c39.6 0 71.8-32.1 71.8-71.7c-.1-39.4-32.2-71.5-71.8-71.5" />
+          <path fill="#ff8000" fill-rule="evenodd" d="M184.2 256c0-13.9 4-26.9 10.9-37.9c-12.7-20.3-35.2-33.7-60.9-33.7c-39.6 0-71.8 32.1-71.8 71.7s32.1 71.7 71.8 71.7c25.7 0 48.2-13.5 60.9-33.7c-6.9-11.2-10.9-24.2-10.9-38.1" />
+        </svg>
+        Follow me on Letterboxd
+      </a>
     </div>
 
     <!-- Review URL input -->
@@ -293,11 +383,15 @@ function selectImage(image: TmdbImage) {
       />
 
       <button
-        class="btn btn-gradient btn-primary bg-primary text-primary-content text-sm join-item rounded-r-md tracking-wider shrink-0"
+        class="btn btn-gradient btn-primary bg-primary text-primary-content text-sm join-item rounded-r-md shrink-0"
         :disabled="isLoading"
         @click="fetchReview"
       >
-        {{ isLoading ? 'Loading...' : 'CREATE' }}
+        <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 16 16">
+          <path d="M0 0h16v16H0z" fill="none" />
+          <path fill="currentColor" d="M13 1a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2zM3 11v2h10v-2l-2-2l-2 2l-3-3zm8-8a2 2 0 1 0 0 4a2 2 0 0 0 0-4" />
+        </svg>
+        {{ isLoading ? 'Loading...' : 'Create' }}
       </button>
     </div>
     <p v-if="errorMessage" class="text-error text-sm">{{ errorMessage }}</p>
@@ -379,7 +473,32 @@ function selectImage(image: TmdbImage) {
       </div>
     </div>
 
-    <button v-if="reviewData" class="btn btn-gradient btn-primary rounded-md uppercase tracking-wider text-sm" @click="exportAsImage">Save template</button>
+    <div v-if="reviewData" class="flex flex-wrap items-center justify-center gap-3">
+      <button
+        class="btn btn-gradient btn-primary rounded-md text-sm"
+        :disabled="isExporting"
+        @click="exportAsImage"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24">
+          <path d="M0 0h24v24H0z" fill="none" />
+          <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 8zM4 19h16v2H4z" />
+        </svg>
+        Download
+      </button>
+      <button
+        v-if="canShareFiles"
+        class="btn btn-gradient btn-primary rounded-md text-sm"
+        :disabled="isExporting"
+        @click="shareAsImage"
+      >
+      <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24">
+        <path d="M0 0h24v24H0z" fill="none" />
+        <path fill="currentColor" d="M17.5 2.5a3 3 0 0 0-2.902 3.765a.8.8 0 0 0-.207.077l-2.757 1.503L8.128 9.85a1 1 0 0 0-.1.068a3 3 0 1 0 .682 4.612l2.926 1.627l2.954 1.611q-.09.353-.09.733a3 3 0 1 0 .81-2.05l-2.948-1.607l-2.946-1.636a3 3 0 0 0-.308-2.19l3.258-1.862l2.743-1.497a.8.8 0 0 0 .177-.133A3 3 0 1 0 17.5 2.5" />
+      </svg>
+        Share
+      </button>
+    </div>
+    <p v-if="shareHint" class="text-sm">{{ shareHint }}</p>
   </section>
 
   <section id="spacer"></section>
